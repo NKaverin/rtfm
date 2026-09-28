@@ -19,5 +19,8 @@ def load_chunk(chunk_id: str) -> dict | None:
         return None
     return {k.decode(): v.decode() for k, v in raw.items()}
 
+def delete_chunk(chunk_id: str) -> None:
+    r.delete(_key(chunk_id))
+
 if __name__ == "__main__":
     print(chunk_ids())
