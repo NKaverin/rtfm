@@ -18,7 +18,3 @@ def cosine_similarity(a, b) -> float:
     if lengths == 0:
         raise ValueError("cosine similarity is undefined for a zero vector")
     return float(a @ b / lengths)
-
-if __name__ == "__main__":
-    a, b = embed(["git rebase replays commits onto main", "main replays commits onto git rebase"])
-    print(cosine_similarity(a, b))
