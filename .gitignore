@@ -9,4 +9,7 @@ wheels/
 # Virtual environments
 .venv
 
+# Downloaded data
+data/
+
 .env
