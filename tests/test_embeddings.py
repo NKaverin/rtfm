@@ -4,7 +4,7 @@ from types import SimpleNamespace
 import pytest
 
 import embeddings
-from embeddings import DIM, cosine_similarity, embed
+from embeddings import DIM, cosine_similarity, embed, count_tokens
 
 
 def test_same_direction_is_one():
@@ -46,7 +46,7 @@ class FakeGeminiClient:
 
 def test_gemini_backend_turns_response_into_float32_array(monkeypatch):
     fake = FakeGeminiClient()
-    monkeypatch.setattr(embeddings.genai, "Client", lambda: fake)
+    monkeypatch.setattr(embeddings.genai, "Client", lambda **kwargs: fake)
     monkeypatch.setattr(embeddings, "BACKEND", "gemini")
 
     vectors = embeddings.embed(["first", "second"])
@@ -57,6 +57,10 @@ def test_gemini_backend_turns_response_into_float32_array(monkeypatch):
     assert fake.requests == [
       {"model": "gemini-embedding-001", "contents": ["first", "second"], "dim": 768}      
     ]
+
+def test_count_tokens():
+    assert count_tokens("") == 0
+    assert count_tokens("git commit --amend replaces the last commit") == 10
 
 @pytest.mark.skipif("GEMINI_API_KEY" not in os.environ, reason="needs GEMINI_API_KEY")
 def test_gemini_real_call_related_beats_unrelated(monkeypatch):

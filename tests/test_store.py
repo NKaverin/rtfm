@@ -4,21 +4,19 @@ import pytest
 import store
 from embeddings import DIM, embed
 
-def save_test_chunk(chunk_id: str, text: str, source: str = "default") -> None:
-    store.save_chunk(chunk_id, text, source, embed([text])[0])
+pytestmark = pytest.mark.usefixtures("isolated_store")
 
-@pytest.fixture(autouse=True)
-def isolated_store(monkeypatch):
-    monkeypatch.setattr(store, "PREFIX", "test-chunk:")
-    monkeypatch.setattr(store, "INDEX", "idx:test-chunks")
-    store.ensure_index()
-    yield
-    for chunk_id in store.chunk_ids():
-        store.delete_chunk(chunk_id)
+def save_test_chunk(chunk_id: str, text: str, source: str = "default") -> None:
+    store.save_chunk(chunk_id, text, source, "Test heading", 0, embed([text])[0])
 
 def test_save_then_load_returns_same_fields():
     save_test_chunk("test1", "foo", "bar.foo")
-    assert store.load_chunk("test1") == {"text": "foo", "source": "bar.foo"}
+    assert store.load_chunk("test1") == {
+        "text": "foo", 
+        "source": "bar.foo",
+        "heading": "Test heading", 
+        "position": 0,
+    }
 
 def test_load_missing_chunk_returns_none():
     assert store.load_chunk("test-does-not-exist") is None
@@ -37,11 +35,11 @@ def test_delete_chunk_removes_it():
 
 def test_save_rejects_wrong_vector_type():
     with pytest.raises(ValueError):
-        store.save_chunk("test-bad", "x", "foo.bar", np.zeros(DIM, dtype=np.float64))
+        store.save_chunk("test-bad", "x", "foo.bar", "Test heading", 0, np.zeros(DIM, dtype=np.float64))
 
 def test_save_rejects_wrong_vector_length():
     with pytest.raises(ValueError):
-        store.save_chunk("test-bad", "x", "foo.bar", np.zeros(DIM + 1, dtype=np.float32))
+        store.save_chunk("test-bad", "x", "foo.bar", "Test heading", 0, np.zeros(DIM + 1, dtype=np.float32))
 
 def test_search_finds_nearest_chunk_first():
     save_test_chunk("test-revert", "git revert creates a new commit that undoes an earlier one")
