@@ -1,5 +1,9 @@
+import os
+from types import SimpleNamespace
+
 import pytest
 
+import answer
 import store
 from answer import REFUSAL, SYSTEM_PROMPT, build_prompt, format_context, retrieve
 from embeddings import embed
@@ -51,3 +55,73 @@ def test_retrieve_returns_nothing_from_an_empty_index(isolated_store):
 def test_retrieve_rejects_a_blank_question():
     with pytest.raises(ValueError):
         retrieve("   ")
+
+class FakeGeminiClient:
+    """Stands in for genai.Client: records the request, returns a canned reply."""
+
+    def __init__(self, text, status="completed"):
+        self.reply = SimpleNamespace(output_text=text, status=status)
+        self.requests = []
+        self.interactions = self
+
+    def create(self, model, system_instruction, input):
+        self.requests.append({"model": model, "system_instruction": system_instruction, "input": input})
+        return self.reply
+
+
+def test_generate_sends_system_and_prompt_and_returns_text(monkeypatch):
+    fake = FakeGeminiClient("  Use git revert.\n")
+    monkeypatch.setattr(answer.genai, "Client", lambda: fake)
+    assert answer.generate("the rules", "the prompt") == "Use git revert."
+    assert fake.requests == [
+        {"model": "gemini-3.8-flash", "system_instruction": "the rules", "input": "the prompt"}
+    ]
+
+
+def test_generate_raises_when_the_model_returns_nothing(monkeypatch):
+    monkeypatch.setattr(answer.genai, "Client", lambda: FakeGeminiClient("", status="failed"))
+    with pytest.raises(RuntimeError):
+        answer.generate("the rules", "the prompt")
+
+
+def save_two_chunks():
+    for chunk_id, source, text in [
+        ("revert", "undoing.asc", "git revert undoes an earlier commit"),
+        ("banana", "fruit.asc", "Bananas are rich in potassium"),
+    ]:
+        store.save_chunk(chunk_id, text, source, "H", 0, embed([text])[0])
+
+
+def test_answer_lists_only_sources_the_model_cited(monkeypatch, isolated_store):
+    save_two_chunks()
+    prompts = []
+
+    def fake_generate(system, prompt):
+        prompts.append((system, prompt))
+        return "Use git revert [undoing.asc]. It adds a new commit [undoing.asc]."
+
+    monkeypatch.setattr(answer, "generate", fake_generate)
+    result = answer.answer("How do I undo a commit?")
+
+    assert result == {
+        "answer": "Use git revert [undoing.asc]. It adds a new commit [undoing.asc].",
+        "sources": ["undoing.asc"],
+        "refused": False,
+    }
+    system, prompt = prompts[0]
+    assert system == SYSTEM_PROMPT
+    assert 'source="undoing.asc"' in prompt
+    assert prompt.endswith("Question: How do I undo a commit?")
+
+
+def test_answer_marks_a_refusal(monkeypatch, isolated_store):
+    save_two_chunks()
+    monkeypatch.setattr(answer, "generate", lambda system, prompt: REFUSAL)
+    result = answer.answer("How do I bake bread?")
+    assert result == {"answer": REFUSAL, "sources": [], "refused": True}
+
+
+@pytest.mark.skipif("GEMINI_API_KEY" not in os.environ, reason="needs GEMINI_API_KEY")
+def test_real_model_refuses_when_the_excerpts_do_not_cover_the_question(isolated_store):
+    save_two_chunks()
+    assert answer.answer("What is the capital of France?")["refused"] is True
