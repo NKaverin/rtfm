@@ -62,3 +62,45 @@ def test_ingest_runs_the_ingest_and_returns_its_counts(monkeypatch):
     response = client.post("/ingest")
     assert response.status_code == 200
     assert response.json() == {"chunks": 5, "removed": 1}
+
+def test_ask_stream_sends_each_event_in_sse_format(monkeypatch):
+    monkeypatch.setattr(answer, "retrieve", lambda question: ["a hit"])
+
+    def fake_events(question, hits):
+        assert hits == ["a hit"]
+        yield {"type": "token", "text": "Use git revert."}
+        yield {"type": "done", "sources": ["undoing.asc"], "refused": False}
+
+    monkeypatch.setattr(answer, "answer_events", fake_events)
+    response = client.post("/ask/stream", json={"question": "How do I undo a commit?"})
+
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("text/event-stream")
+    assert response.text == (
+        'event: token\ndata: {"text": "Use git revert."}\n\n'
+        'event: done\ndata: {"sources": ["undoing.asc"], "refused": false}\n\n'
+    )
+
+
+def test_ask_stream_reports_a_failure_mid_answer_as_an_error_event(monkeypatch):
+    monkeypatch.setattr(answer, "retrieve", lambda question: [])
+
+    def failing_events(question, hits):
+        yield {"type": "token", "text": "Use "}
+        raise RuntimeError("model went away")
+
+    monkeypatch.setattr(answer, "answer_events", failing_events)
+    response = client.post("/ask/stream", json={"question": "How do I undo a commit?"})
+
+    assert response.status_code == 200
+    assert response.text.endswith('event: error\ndata: {"message": "RuntimeError: model went away"}\n\n')
+
+
+def test_ask_stream_fails_before_streaming_when_retrieval_fails(monkeypatch):
+    def broken_retrieve(question):
+        raise redis.ConnectionError("down")
+
+    monkeypatch.setattr(answer, "retrieve", broken_retrieve)
+    quiet_client = TestClient(app, raise_server_exceptions=False)
+    response = quiet_client.post("/ask/stream", json={"question": "How do I undo a commit?"})
+    assert response.status_code == 500    

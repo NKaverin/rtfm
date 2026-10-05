@@ -1,4 +1,6 @@
 import sys
+import time
+from collections.abc import Iterator
 
 from google import genai
 
@@ -42,14 +44,37 @@ def generate(system: str, prompt: str) -> str:
         raise RuntimeError(f"model returned no text (status: {interaction.status})")
     return interaction.output_text.strip()
 
-def answer(question: str) -> dict:
-    hits = retrieve(question)
-    text = generate(SYSTEM_PROMPT, build_prompt(question, hits))
+def generate_stream(system: str, prompt: str) -> Iterator[str]:
+    client = genai.Client()
+    stream = client.interactions.create(
+        model=LLM_MODEL,
+        system_instruction=system,
+        input=prompt,
+        stream=True
+    )
+    for event in stream:
+        if event.event_type == "step.delta" and event.delta.type == "text":
+            yield event.delta.text
+
+def cited_sources(text: str, hits: list[dict]) -> list[str]:
     sources = []
     for hit in hits:
         if f"[{hit['source']}]" in text and hit["source"] not in sources:
             sources.append(hit["source"])
-    return {"answer": text, "sources": sources, "refused": text == REFUSAL}
+    return sources
+
+def answer(question: str) -> dict:
+    hits = retrieve(question)
+    text = generate(SYSTEM_PROMPT, build_prompt(question, hits))
+    return {"answer": text, "sources": cited_sources(text, hits), "refused": text == REFUSAL}
+
+def answer_events(question: str, hits: list[dict]) -> Iterator[dict]:
+    pieces = []
+    for piece in generate_stream(SYSTEM_PROMPT, build_prompt(question, hits)):
+        pieces.append(piece)
+        yield {"type": "token", "text": piece}
+    text = "".join(pieces).strip()
+    yield  {"type": "done", "sources": cited_sources(text, hits), "refused": text == REFUSAL}
 
 if __name__ == "__main__":
     if len(sys.argv) != 2:

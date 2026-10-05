@@ -125,3 +125,50 @@ def test_answer_marks_a_refusal(monkeypatch, isolated_store):
 def test_real_model_refuses_when_the_excerpts_do_not_cover_the_question(isolated_store):
     save_two_chunks()
     assert answer.answer("What is the capital of France?")["refused"] is True
+
+class FakeStreamingClient:
+    """Stands in for genai.Client when stream=True: returns a list of events."""
+
+    def __init__(self, events):
+        self.events = events
+        self.requests = []
+        self.interactions = self
+
+    def create(self, model, system_instruction, input, stream):
+        self.requests.append({"model": model, "stream": stream})
+        return self.events
+
+
+def text_event(text):
+    return SimpleNamespace(event_type="step.delta", delta=SimpleNamespace(type="text", text=text))
+
+
+def test_generate_stream_yields_only_text_pieces(monkeypatch):
+    events = [
+        SimpleNamespace(event_type="interaction.created"),
+        text_event("Use "),
+        SimpleNamespace(event_type="step.delta", delta=SimpleNamespace(type="thought_summary")),
+        text_event("git revert."),
+        SimpleNamespace(event_type="interaction.completed"),
+    ]
+    fake = FakeStreamingClient(events)
+    monkeypatch.setattr(answer.genai, "Client", lambda: fake)
+    assert list(answer.generate_stream("rules", "prompt")) == ["Use ", "git revert."]
+    assert fake.requests == [{"model": "gemini-3.8-flash", "stream": True}]
+
+
+def test_answer_events_ends_with_sources_and_refusal_flag(monkeypatch):
+    hits = [{"source": "undoing.asc", "heading": "H", "text": "git revert undoes a commit"}]
+    monkeypatch.setattr(answer, "generate_stream", lambda system, prompt: iter(["Use git revert ", "[undoing.asc]."]))
+    assert list(answer.answer_events("How do I undo a commit?", hits)) == [
+        {"type": "token", "text": "Use git revert "},
+        {"type": "token", "text": "[undoing.asc]."},
+        {"type": "done", "sources": ["undoing.asc"], "refused": False},
+    ]
+
+
+def test_answer_events_detects_a_refusal_split_across_pieces(monkeypatch):
+    half = len(REFUSAL) // 2
+    monkeypatch.setattr(answer, "generate_stream", lambda system, prompt: iter([REFUSAL[:half], REFUSAL[half:] + "\n"]))
+    events = list(answer.answer_events("How do I bake bread?", []))
+    assert events[-1] == {"type": "done", "sources": [], "refused": True}    
