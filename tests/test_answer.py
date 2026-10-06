@@ -92,7 +92,7 @@ def save_two_chunks():
         store.save_chunk(chunk_id, text, source, "H", 0, embed([text])[0])
 
 
-def test_answer_lists_only_sources_the_model_cited(monkeypatch, isolated_store):
+def test_answer_lists_only_sources_the_model_cited(monkeypatch, isolated_store, isolated_cache):
     save_two_chunks()
     prompts = []
 
@@ -107,6 +107,7 @@ def test_answer_lists_only_sources_the_model_cited(monkeypatch, isolated_store):
         "answer": "Use git revert [undoing.asc]. It adds a new commit [undoing.asc].",
         "sources": ["undoing.asc"],
         "refused": False,
+        "cached": False,
     }
     system, prompt = prompts[0]
     assert system == SYSTEM_PROMPT
@@ -114,15 +115,15 @@ def test_answer_lists_only_sources_the_model_cited(monkeypatch, isolated_store):
     assert prompt.endswith("Question: How do I undo a commit?")
 
 
-def test_answer_marks_a_refusal(monkeypatch, isolated_store):
+def test_answer_marks_a_refusal(monkeypatch, isolated_store, isolated_cache):
     save_two_chunks()
     monkeypatch.setattr(answer, "generate", lambda system, prompt: REFUSAL)
     result = answer.answer("How do I bake bread?")
-    assert result == {"answer": REFUSAL, "sources": [], "refused": True}
+    assert result == {"answer": REFUSAL, "sources": [], "refused": True, "cached": False}
 
 
 @pytest.mark.skipif("GEMINI_API_KEY" not in os.environ, reason="needs GEMINI_API_KEY")
-def test_real_model_refuses_when_the_excerpts_do_not_cover_the_question(isolated_store):
+def test_real_model_refuses_when_the_excerpts_do_not_cover_the_question(isolated_store, isolated_cache):
     save_two_chunks()
     assert answer.answer("What is the capital of France?")["refused"] is True
 

@@ -1,5 +1,6 @@
 import pytest
 
+import cache
 import store
 from ingest import (
     Chunk,
@@ -12,7 +13,7 @@ from ingest import (
     read_book,
     split_sections,
 )
-from embeddings import count_tokens
+from embeddings import count_tokens, embed
 
 SAMPLE = """[[_undoing]]
 === Undoing Things
@@ -95,7 +96,7 @@ def test_make_chunks_numbers_positions_per_file():
         Chunk("b.asc#0", "b.asc", "Three", 0, "third"),
     ]
 
-def test_ingest_book_stores_chunks_and_removes_stale_ones(tmp_path, isolated_store):
+def test_ingest_book_stores_chunks_and_removes_stale_ones(tmp_path, isolated_store, isolated_cache):
     folder = tmp_path / "02-git-basics" / "sections"
     folder.mkdir(parents=True)
     book_file = folder / "undoing.asc"
@@ -113,6 +114,16 @@ def test_ingest_book_stores_chunks_and_removes_stale_ones(tmp_path, isolated_sto
     assert store.chunk_ids() == ["02-git-basics/sections/undoing.asc#0"]
 
 
-def test_ingest_book_refuses_an_empty_book(tmp_path, isolated_store):
+def test_ingest_book_refuses_an_empty_book(tmp_path, isolated_store, isolated_cache):
     with pytest.raises(ValueError):
         ingest_book(tmp_path)
+
+def test_ingest_book_flushes_the_answer_cache(tmp_path, isolated_store, isolated_cache):
+    folder = tmp_path / "02-git-basics" / "sections"
+    folder.mkdir(parents=True)
+    (folder / "undoing.asc").write_text(SAMPLE, encoding="utf-8")
+    cache.save("an old question", embed(["an old question"])[0], {"result": {}, "prompt_tokens": 1})
+
+    ingest_book(tmp_path)
+
+    assert cache.lookup(embed(["an old question"])[0]) is None

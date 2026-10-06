@@ -1,3 +1,5 @@
+import time
+
 import numpy as np
 import redis
 from redis.commands.search.field import NumericField, TagField, TextField, VectorField
@@ -14,18 +16,26 @@ INDEX = f"idx:chunks:{BACKEND}"
 def _key(chunk_id: str) -> str:
     return PREFIX + chunk_id
 
-def ensure_index() -> None:
-    if INDEX.encode() in r.execute_command("FT._LIST"):
+def create_index(index: str, prefix: str, schema: tuple) -> None:
+    if index.encode() in r.execute_command("FT._LIST"):
         return
+    definition = IndexDefinition(prefix=[prefix], index_type=IndexType.HASH)
+    r.ft(index).create_index(schema, definition=definition)
+    while int(r.ft(index).info()["indexing"]):
+        time.sleep(0.01)
+
+def vector_field() -> VectorField:
+    return VectorField("vector", "FLAT", {"TYPE": "FLOAT32", "DIM": DIM, "DISTANCE_METRIC": "COSINE"})
+
+def ensure_index() -> None:
     schema = (
         TextField("text"),
         TagField("source"),
         TextField("heading"),
         NumericField("position"),
-        VectorField("vector", "FLAT", {"TYPE": "FLOAT32", "DIM": DIM, "DISTANCE_METRIC": "COSINE"}),
+        vector_field(),
     )
-    definition = IndexDefinition(prefix=[PREFIX], index_type=IndexType.HASH)
-    r.ft(INDEX).create_index(schema, definition=definition)
+    create_index(INDEX, PREFIX, schema)
 
 def chunk_ids() -> list[str]:
     return sorted(key.decode().removeprefix(PREFIX) for key in r.scan_iter(PREFIX + "*"))

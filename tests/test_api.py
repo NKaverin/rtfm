@@ -30,8 +30,8 @@ def test_ask_returns_the_answer_as_json(monkeypatch):
 
     def fake_answer(question):
         questions.append(question)
-        return {"answer": "Use git revert [undoing.asc].", "sources": ["undoing.asc"], "refused": False}
-
+        return {"answer": "Use git revert [undoing.asc].", "sources": ["undoing.asc"], "refused": False, "cached": False}
+    
     monkeypatch.setattr(answer, "answer", fake_answer)
     response = client.post("/ask", json={"question": "  How do I undo a commit?  "})
 
@@ -40,6 +40,7 @@ def test_ask_returns_the_answer_as_json(monkeypatch):
         "answer": "Use git revert [undoing.asc].",
         "sources": ["undoing.asc"],
         "refused": False,
+        "cached": False,
     }
     assert questions == ["How do I undo a commit?"]
 

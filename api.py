@@ -8,6 +8,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, StringConstraints
 
 import answer
+import cache
 import ingest
 import store
 
@@ -22,7 +23,17 @@ class AskResponse(BaseModel):
     answer: str
     sources: list[str]
     refused: bool
+    cached: bool
 
+@app.get("/metrics")
+def metrics() -> dict:
+    return cache.metrics()
+
+
+@app.post("/cache/flush")
+def flush_cache() -> dict:
+    return {"removed": cache.flush()}
+            
 def _sse(events: Iterator[dict]) -> Iterator[str]:
     try:
         for event in events:

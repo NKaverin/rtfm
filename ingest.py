@@ -3,6 +3,7 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 
+import cache
 import store
 from embeddings import count_tokens, embed
 
@@ -130,6 +131,7 @@ def ingest_book(book_dir: Path) -> dict:
     stale = [chunk_id for chunk_id in store.chunk_ids() if chunk_id not in new_ids]
     for chunk_id in stale:
         store.delete_chunk(chunk_id)
+    cache.flush()
     return {"chunks": len(chunks), "removed": len(stale)}  
 
 def main():
