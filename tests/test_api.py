@@ -5,6 +5,7 @@ import answer
 import ingest
 import memory
 import store
+from embeddings import embed
 from api import app
 
 client = TestClient(app)
@@ -29,8 +30,8 @@ def test_health_reports_503_when_redis_is_down(monkeypatch):
 def test_ask_returns_the_answer_as_json(monkeypatch):
     questions = []
 
-    def fake_answer(question, session_id, user_id):
-        questions.append((question, session_id, user_id))
+    def fake_answer(question, session_id, user_id, source):
+        questions.append((question, session_id, user_id, source))
         return {
             "answer": "Use git revert [undoing.asc].",
             "sources": ["undoing.asc"],
@@ -40,7 +41,12 @@ def test_ask_returns_the_answer_as_json(monkeypatch):
         }
 
     monkeypatch.setattr(answer, "answer", fake_answer)
-    body = {"question": "  How do I undo a commit?  ", "session_id": "abc-123", "user_id": "nik"}
+    body = {
+        "question": "  How do I undo a commit?  ",
+        "session_id": "abc-123",
+        "user_id": "nik",
+        "source": "02-git-basics",
+    }
     response = client.post("/ask", json=body)
 
     assert response.status_code == 200
@@ -52,10 +58,11 @@ def test_ask_returns_the_answer_as_json(monkeypatch):
         "remembered": [],
         "session_id": "abc-123",
     }
-    assert questions == [("How do I undo a commit?", "abc-123", "nik")]
+    assert questions == [("How do I undo a commit?", "abc-123", "nik", "02-git-basics")]
+
 
 def test_ask_rejects_a_blank_question_without_calling_the_model(monkeypatch):
-    def must_not_run(question, session_id, user_id):
+    def must_not_run(question, session_id, user_id, source):
         raise AssertionError("answer() was called")
 
     monkeypatch.setattr(answer, "answer", must_not_run)
@@ -111,14 +118,14 @@ def test_ask_stream_fails_before_streaming_when_retrieval_fails(monkeypatch):
         raise redis.ConnectionError("down")
 
     monkeypatch.setattr(answer, "retrieve", broken_retrieve)
-    quiet_client = TestClient(app, raise_server_exceptions=False)
-    response = quiet_client.post("/ask/stream", json={"question": "How do I undo a commit?"})
-    assert response.status_code == 500    
+    response = client.post("/ask/stream", json={"question": "How do I undo a commit?"})
+    assert response.status_code == 503
+    assert response.json() == {"detail": "Redis is not reachable"}   
 
 def test_ask_creates_a_session_id_when_none_is_sent(monkeypatch):
     seen = []
 
-    def fake_answer(question, session_id, user_id):
+    def fake_answer(question, session_id, user_id, source):
         seen.append(session_id)
         return {"answer": "x", "sources": [], "refused": False, "cached": False, "remembered": []}
     
@@ -146,3 +153,31 @@ def test_memories_can_be_listed_and_deleted(isolated_memory):
 
 def test_memories_rejects_a_user_id_with_unsafe_characters():
     assert client.get("/memories/a-b").status_code == 422    
+
+def test_ask_reports_502_when_the_model_fails(monkeypatch):
+    def broken_answer(question, session_id, user_id, source):
+        raise answer.ModelError("APIConnectionError: Server disconnected")
+
+    monkeypatch.setattr(answer, "answer", broken_answer)
+    response = client.post("/ask", json={"question": "How do I undo a commit?"})
+    assert response.status_code == 502
+    assert response.json() == {"detail": "The model call failed. APIConnectionError: Server disconnected"}
+
+
+def test_ask_reports_503_when_redis_is_down(monkeypatch):
+    def broken_answer(question, session_id, user_id, source):
+        raise redis.ConnectionError("down")
+
+    monkeypatch.setattr(answer, "answer", broken_answer)
+    response = client.post("/ask", json={"question": "How do I undo a commit?"})
+    assert response.status_code == 503
+
+
+def test_ask_rejects_a_source_with_unsafe_characters():
+    response = client.post("/ask", json={"question": "x", "source": "a b}"})
+    assert response.status_code == 422
+
+
+def test_sources_lists_the_ingested_files(isolated_store):
+    store.save_chunk("a", "text", "02-git-basics/sections/tagging.asc", "H", 0, embed(["text"])[0])
+    assert client.get("/sources").json() == ["02-git-basics/sections/tagging.asc"]

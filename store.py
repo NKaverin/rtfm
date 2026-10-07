@@ -1,3 +1,4 @@
+import re
 import time
 
 import numpy as np
@@ -70,9 +71,17 @@ def load_chunk(chunk_id: str) -> dict | None:
 def delete_chunk(chunk_id: str) -> None:
     r.delete(_key(chunk_id))
 
-def search(vector: np.ndarray, k: int = 3) -> list[dict]:
+def escape_tag(value: str) -> str:
+    return re.sub(r"([^A-Za-z0-9_])", r"\\\1", value)
+
+
+def sources() -> list[str]:
+    return sorted(value.decode() for value in r.execute_command("FT.TAGVALS", INDEX, "source"))
+
+def search(vector: np.ndarray, k: int = 3, source: str | None = None) -> list[dict]:
+    candidates = f"(@source:{{{escape_tag(source)}*}})" if source else "*"
     query = (
-        Query(f"*=>[KNN {k} @vector $vec AS distance]")
+        Query(f"{candidates}=>[KNN {k} @vector $vec AS distance]")
         .sort_by("distance")
         .return_fields("text", "source", "heading", "position", "distance")
         .paging(0, k)
@@ -91,9 +100,12 @@ def search(vector: np.ndarray, k: int = 3) -> list[dict]:
     ]
 
 if __name__ == "__main__":
-  from embeddings import embed
+    from embeddings import embed
 
-  for question in ["How do I undo my last commit?", "How do I see who changed a line?"]:
-    print(question)
-    for hit in search(embed([question])[0]):
-        print(f"  {hit['distance']:.3f}  {hit['source']}  #{hit['position']}  {hit['heading']}")
+    print(escape_tag("02-git-basics/sections/tagging.asc"))
+    print(len(sources()), "files, first three:", sources()[:3])
+    vector = embed(["How do I delete something?"])[0]
+    for source in [None, "02-git-basics", "02-git-basics/sections/tagging.asc", "no-such-chapter"]:
+        print("source =", source)
+        for hit in search(vector, 3, source):
+            print(f"   {hit['distance']:.3f}  {hit['source']}  ({hit['heading']})")

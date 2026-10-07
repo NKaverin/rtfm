@@ -54,6 +54,19 @@ def count_tokens(text: str) -> int:
     return len(_local_model.tokenize(text)[0].ids)
 
 if __name__ == "__main__":
-    text = "git commit --amend replaces the last commit"
-    encoding = _local_model.tokenize(text)[0]
-    print(encoding.tokens)
+    base = "How do I undo my last commit?"
+    others = [
+        "How do I undo my last commit?",
+        "How can I undo the last commit?",
+        "how do i undo my last commit",
+        "What's the way to undo my most recent commit?",
+        "I want to revert the commit I just made, how?",
+        "How do I see my last commit?",
+        "How do I undo my last push?",
+        "How do I redo my last commit?",
+        "How do I undo my last merge?",
+        "How do I create a branch?",
+    ]
+    vectors = embed([base] + others)
+    for text, vector in zip(others, vectors[1:]):
+        print(f"{1 - cosine_similarity(vectors[0], vector):.3f}  {text}")

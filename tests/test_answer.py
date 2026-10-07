@@ -4,6 +4,8 @@ from types import SimpleNamespace
 import pytest
 
 import answer
+import cache
+import memory
 import store
 from answer import REFUSAL, SYSTEM_PROMPT, build_prompt, format_context, retrieve, search_text, parse_facts
 from embeddings import embed
@@ -80,7 +82,7 @@ def test_generate_sends_system_and_prompt_and_returns_text(monkeypatch):
 
 def test_generate_raises_when_the_model_returns_nothing(monkeypatch):
     monkeypatch.setattr(answer.genai, "Client", lambda: FakeGeminiClient("", status="failed"))
-    with pytest.raises(RuntimeError):
+    with pytest.raises(answer.ModelError):
         answer.generate("the rules", "the prompt")
 
 
@@ -224,3 +226,94 @@ def test_parse_facts_returns_nothing_for_anything_else():
     assert parse_facts('{"text": "not a list"}') == []
     assert parse_facts('["just a string", {"no_text": 1}]') == []
     assert parse_facts("[]") == []
+
+def test_optional_returns_the_default_and_logs_when_the_action_fails(caplog):
+    def broken(value):
+        raise KeyError(value)
+
+    assert answer.optional("fallback", broken, "x") == "fallback"
+    assert "broken failed, carrying on without it" in caplog.text
+    assert answer.optional("fallback", len, "abc") == 3
+
+def test_generate_turns_any_sdk_failure_into_a_model_error(monkeypatch):
+    def broken_client():
+        raise ConnectionError("server disconnected")
+
+    monkeypatch.setattr(answer.genai, "Client", broken_client)
+    with pytest.raises(answer.ModelError, match="ConnectionError: server disconnected"):
+        answer.generate("the rules", "the prompt")
+
+
+def test_generate_records_token_usage(monkeypatch, isolated_cache):
+    fake = FakeGeminiClient("Use git revert.")
+    fake.reply.usage = SimpleNamespace(total_input_tokens=900, total_output_tokens=40, total_thought_tokens=60)
+    monkeypatch.setattr(answer.genai, "Client", lambda: fake)
+    answer.generate("the rules", "the prompt")
+    assert cache.usage() == {"input_tokens": 900, "output_tokens": 100, "estimated_cost_usd": 0.00105}
+
+def test_build_prompt_puts_the_summary_first_in_the_conversation():
+    prompt = build_prompt("How do I delete it?", HITS, HISTORY, summary="The user asked about tags.")
+    assert "<conversation>\nSummary of earlier messages: The user asked about tags.\nUser: How do I create a tag?" in prompt    
+
+def test_a_source_limits_the_search_and_skips_the_cache(monkeypatch, isolated_store, isolated_cache):
+    save_two_chunks()
+    prompts = []
+
+    def fake_generate(system, prompt):
+        prompts.append(prompt)
+        return "Bananas [fruit.asc]."
+
+    monkeypatch.setattr(answer, "generate", fake_generate)
+    first = answer.answer("How do I undo a commit?", source="fruit.asc")
+    second = answer.answer("How do I undo a commit?", source="fruit.asc")
+
+    assert 'source="fruit.asc"' in prompts[0]
+    assert 'source="undoing.asc"' not in prompts[0]
+    assert first["cached"] is False
+    assert second["cached"] is False
+
+
+def test_a_broken_cache_entry_is_treated_as_a_miss(monkeypatch, isolated_store, isolated_cache, caplog):
+    save_two_chunks()
+    question = "How do I undo a commit?"
+    cache.save(question, embed([question])[0], {"wrong": "shape"})
+    monkeypatch.setattr(answer, "generate", lambda system, prompt: "Use git revert [undoing.asc].")
+
+    result = answer.answer(question)
+
+    assert result["answer"] == "Use git revert [undoing.asc]."
+    assert result["cached"] is False
+    assert "cached_result failed" in caplog.text
+    assert answer.answer(question)["cached"] is True
+
+
+def test_a_failing_memory_does_not_stop_the_answer(monkeypatch, isolated_store, isolated_cache, caplog):
+    save_two_chunks()
+
+    def broken_recall(user_id, vector):
+        raise RuntimeError("memory index is gone")
+
+    def fake_generate(system, prompt, model=answer.LLM_MODEL):
+        if system == answer.EXTRACTION_PROMPT:
+            raise answer.ModelError("extraction model is gone")
+        return "Use git revert [undoing.asc]."
+
+    monkeypatch.setattr(memory, "recall", broken_recall)
+    monkeypatch.setattr(answer, "generate", fake_generate)
+    result = answer.answer("How do I undo a commit?", user_id="nik")
+
+    assert result["answer"] == "Use git revert [undoing.asc]."
+    assert result["remembered"] == []
+    assert "recall failed" in caplog.text
+    assert "learn failed" in caplog.text
+
+
+def test_a_failing_answer_model_is_not_hidden(monkeypatch, isolated_store, isolated_cache):
+    save_two_chunks()
+
+    def broken_generate(system, prompt):
+        raise answer.ModelError("server disconnected")
+
+    monkeypatch.setattr(answer, "generate", broken_generate)
+    with pytest.raises(answer.ModelError):
+        answer.answer("How do I undo a commit?")
