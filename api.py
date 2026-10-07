@@ -5,11 +5,12 @@ from typing import Annotated
 import redis
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel, StringConstraints
+from pydantic import BaseModel, Field, StringConstraints
 
 import answer
 import cache
 import ingest
+import sessions
 import store
 
 app = FastAPI(title="RTFM")
@@ -17,6 +18,7 @@ app = FastAPI(title="RTFM")
 
 class AskRequest(BaseModel):
     question: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
+    session_id: str | None = Field(default=None, pattern=r"^[A-Za-z0-9_-]{1,64}$")
 
 
 class AskResponse(BaseModel):
@@ -24,6 +26,7 @@ class AskResponse(BaseModel):
     sources: list[str]
     refused: bool
     cached: bool
+    session_id: str
 
 @app.get("/metrics")
 def metrics() -> dict:
@@ -53,7 +56,9 @@ def health() -> dict:
 
 @app.post("/ask")
 def ask(request: AskRequest) -> AskResponse:
-    return answer.answer(request.question)
+    session_id = request.session_id or sessions.new_id()
+    result = answer.answer(request.question, session_id)
+    return {**result, "session_id": session_id}
 
 @app.post("/ingest")
 def run_ingest() -> dict:

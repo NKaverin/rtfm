@@ -1,6 +1,7 @@
 import pytest
 
 import cache
+import sessions
 import store
 
 @pytest.fixture
@@ -24,3 +25,10 @@ def isolated_cache(monkeypatch):
     for key in store.r.scan_iter("test-metrics:*"):
         store.r.delete(key)
     store.r.ft(cache.INDEX).dropindex()
+
+@pytest.fixture
+def isolated_sessions(monkeypatch):
+    monkeypatch.setattr(sessions, "PREFIX", "test-session:")
+    yield
+    for key in store.r.scan_iter("test-session:*"):
+        store.r.delete(key)

@@ -5,7 +5,7 @@ import pytest
 
 import answer
 import store
-from answer import REFUSAL, SYSTEM_PROMPT, build_prompt, format_context, retrieve
+from answer import REFUSAL, SYSTEM_PROMPT, build_prompt, format_context, retrieve, search_text
 from embeddings import embed
 
 HITS = [
@@ -173,3 +173,30 @@ def test_answer_events_detects_a_refusal_split_across_pieces(monkeypatch):
     monkeypatch.setattr(answer, "generate_stream", lambda system, prompt: iter([REFUSAL[:half], REFUSAL[half:] + "\n"]))
     events = list(answer.answer_events("How do I bake bread?", []))
     assert events[-1] == {"type": "done", "sources": [], "refused": True}    
+
+HISTORY = [
+    {"role": "user", "text": "How do I create a tag?"},
+    {"role": "assistant", "text": "Use git tag [tagging.asc]."},
+]
+
+
+def test_build_prompt_puts_the_conversation_between_excerpts_and_question():
+    prompt = build_prompt("How do I delete it?", HITS, HISTORY)
+    assert prompt.endswith(
+        "</excerpt>\n\n"
+        "<conversation>\n"
+        "User: How do I create a tag?\n"
+        "Assistant: Use git tag [tagging.asc].\n"
+        "</conversation>\n\n"
+        "Question: How do I delete it?"
+    )
+
+
+def test_build_prompt_without_history_has_no_conversation_block():
+    assert "<conversation>" not in build_prompt("How do I amend?", HITS)
+    assert "<conversation>" not in build_prompt("How do I amend?", HITS, [])
+
+
+def test_search_text_adds_earlier_user_questions_but_not_answers():
+    assert search_text("How do I delete it?", HISTORY) == "How do I create a tag?\nHow do I delete it?"
+    assert search_text("How do I delete it?", []) == "How do I delete it?"
