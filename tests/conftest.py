@@ -1,6 +1,7 @@
 import pytest
 
 import cache
+import memory
 import sessions
 import store
 
@@ -32,3 +33,13 @@ def isolated_sessions(monkeypatch):
     yield
     for key in store.r.scan_iter("test-session:*"):
         store.r.delete(key)
+
+@pytest.fixture
+def isolated_memory(monkeypatch):
+    monkeypatch.setattr(memory, "PREFIX", "test-memory:")
+    monkeypatch.setattr(memory, "INDEX", "idx:test-memory")
+    memory.ensure_index()
+    yield
+    for key in store.r.scan_iter("test-memory:*"):
+        store.r.delete(key)
+    store.r.ft(memory.INDEX).dropindex()

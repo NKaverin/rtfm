@@ -5,7 +5,7 @@ import pytest
 
 import answer
 import store
-from answer import REFUSAL, SYSTEM_PROMPT, build_prompt, format_context, retrieve, search_text
+from answer import REFUSAL, SYSTEM_PROMPT, build_prompt, format_context, retrieve, search_text, parse_facts
 from embeddings import embed
 
 HITS = [
@@ -108,6 +108,7 @@ def test_answer_lists_only_sources_the_model_cited(monkeypatch, isolated_store, 
         "sources": ["undoing.asc"],
         "refused": False,
         "cached": False,
+        "remembered": [],
     }
     system, prompt = prompts[0]
     assert system == SYSTEM_PROMPT
@@ -119,7 +120,7 @@ def test_answer_marks_a_refusal(monkeypatch, isolated_store, isolated_cache):
     save_two_chunks()
     monkeypatch.setattr(answer, "generate", lambda system, prompt: REFUSAL)
     result = answer.answer("How do I bake bread?")
-    assert result == {"answer": REFUSAL, "sources": [], "refused": True, "cached": False}
+    assert result == {"answer": REFUSAL, "sources": [], "refused": True, "cached": False, "remembered": []}
 
 
 @pytest.mark.skipif("GEMINI_API_KEY" not in os.environ, reason="needs GEMINI_API_KEY")
@@ -200,3 +201,26 @@ def test_build_prompt_without_history_has_no_conversation_block():
 def test_search_text_adds_earlier_user_questions_but_not_answers():
     assert search_text("How do I delete it?", HISTORY) == "How do I create a tag?\nHow do I delete it?"
     assert search_text("How do I delete it?", []) == "How do I delete it?"
+
+def test_build_prompt_puts_memories_after_the_excerpts():
+    memories = [{"text": "The user writes Go."}, {"text": "The user works on Windows."}]
+    prompt = build_prompt("How do I amend?", HITS, HISTORY, memories)
+    assert "</excerpt>\n\n<memories>\n- The user writes Go.\n- The user works on Windows.\n</memories>\n\n<conversation>" in prompt
+    assert "<memories>" not in build_prompt("How do I amend?", HITS, HISTORY, [])
+
+
+def test_parse_facts_reads_a_json_list():
+    assert parse_facts('[{"text": "The user writes Go.", "topics": ["language"]}]') == [
+        {"text": "The user writes Go.", "topics": ["language"]}
+    ]
+
+
+def test_parse_facts_accepts_a_fenced_code_block():
+    assert parse_facts('```json\n[{"text": "The user writes Go."}]\n```') == [{"text": "The user writes Go."}]
+
+
+def test_parse_facts_returns_nothing_for_anything_else():
+    assert parse_facts("I found no facts.") == []
+    assert parse_facts('{"text": "not a list"}') == []
+    assert parse_facts('["just a string", {"no_text": 1}]') == []
+    assert parse_facts("[]") == []

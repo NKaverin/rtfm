@@ -3,13 +3,14 @@ from collections.abc import Iterator
 from typing import Annotated
 
 import redis
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Path
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field, StringConstraints
 
 import answer
 import cache
 import ingest
+import memory
 import sessions
 import store
 
@@ -19,13 +20,14 @@ app = FastAPI(title="RTFM")
 class AskRequest(BaseModel):
     question: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
     session_id: str | None = Field(default=None, pattern=r"^[A-Za-z0-9_-]{1,64}$")
-
+    user_id: str | None = Field(default=None, pattern=r"^[A-Za-z0-9_]{1,64}$")
 
 class AskResponse(BaseModel):
     answer: str
     sources: list[str]
     refused: bool
     cached: bool
+    remembered: list[str]    
     session_id: str
 
 @app.get("/metrics")
@@ -36,7 +38,18 @@ def metrics() -> dict:
 @app.post("/cache/flush")
 def flush_cache() -> dict:
     return {"removed": cache.flush()}
-            
+USER_ID = Annotated[str, Path(pattern=r"^[A-Za-z0-9_]{1,64}$")]
+
+
+@app.get("/memories/{user_id}")
+def list_memories(user_id: USER_ID) -> list[dict]:
+    return memory.all_memories(user_id)
+
+
+@app.delete("/memories/{user_id}")
+def delete_memories(user_id: USER_ID) -> dict:
+    return {"removed": memory.forget(user_id)}
+    
 def _sse(events: Iterator[dict]) -> Iterator[str]:
     try:
         for event in events:
@@ -57,7 +70,7 @@ def health() -> dict:
 @app.post("/ask")
 def ask(request: AskRequest) -> AskResponse:
     session_id = request.session_id or sessions.new_id()
-    result = answer.answer(request.question, session_id)
+    result = answer.answer(request.question, session_id, request.user_id)
     return {**result, "session_id": session_id}
 
 @app.post("/ingest")
