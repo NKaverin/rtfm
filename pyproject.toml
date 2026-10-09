@@ -1,7 +1,7 @@
 [project]
 name = "rtfm"
 version = "0.1.0"
-description = "Add your description here"
+description = "Answers Git questions from the Pro Git book: Redis vector search, Gemini, semantic cache and memory"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
